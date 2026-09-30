@@ -1,0 +1,7 @@
+# per-install state, never ship these
+civitai_key.json
+civitai_trigger_cache.json
+trigger_prefs.json
+__pycache__/
+*.pyc
+manifests/
