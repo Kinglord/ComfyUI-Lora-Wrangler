@@ -607,7 +607,7 @@ def download_root():
 
 def _existing_subdir(root, rel_dir):
     """Walk rel_dir under root, matching each segment case-insensitively
-    (so a workflow's 'nsfw/x' finds a local 'NSFW'). Real path or None."""
+    (so a workflow's 'style/x' finds a local 'Style'). Real path or None."""
     cur = root
     segs = [s for s in rel_dir.replace("\\", "/").split("/")
             if s and s not in (".", "..")]
@@ -629,8 +629,8 @@ def _existing_subdir(root, rel_dir):
 def choose_dest_dir(target_name):
     """Where a download for this row lands: (root, dest_dir, matched).
 
-    With match-folders on and the row's own subfolder (e.g. 'NSFW/' in
-    'NSFW/foo') already present under a writable loras root, that folder
+    With match-folders on and the row's own subfolder (e.g. 'Style/' in
+    'Style/foo') already present under a writable loras root, that folder
     is used - the two machines evidently share the same organisation.
     Otherwise <first writable root>/<download folder>."""
     import folder_paths

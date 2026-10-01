@@ -392,7 +392,7 @@ const SETTINGS = [
     defaultValue: true,
     category: ["LoRA Wrangler", "Civitai", "Match folders"],
     tooltip: "If the workflow names the lora with a subfolder (e.g. " +
-      "NSFW/foo) and that folder already exists in your loras folder, " +
+      "Style/foo) and that folder already exists in your loras folder, " +
       "download straight into it instead of the download folder - the " +
       "two machines evidently share the same organisation.",
   },

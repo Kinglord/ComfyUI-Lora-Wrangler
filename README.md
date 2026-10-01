@@ -127,7 +127,7 @@ Each stack has a `report` output. Wire it into ComfyUI's built-in **Preview as T
 ```
 LoRA Wrangler: 3 active, 2 inactive, 1 problem(s)
  [x] Body/curvy.safetensors : 0.8  [triggers: curvy body]
- [x] NSFW/foo.safetensors : 1  (relocated by hash-cache from 'old/foo')  [triggers: foo]
+ [x] Style/foo.safetensors : 1  (relocated by hash-cache from 'old/foo')  [triggers: foo]
  [x] auto_download/bar.safetensors : 0.6  (downloaded from 'bar')
  [ ] detail_slider : 0
  [ ] grain_slider : 0.15 (off)
@@ -188,7 +188,7 @@ Under **Settings > LoRA Wrangler**:
 | Auto-download missing LoRAs | Off | Controls step 3 of the ladder. **Manifest LoRAs only** downloads just the LoRAs listed in this server's manifests. **Any stamped LoRA** downloads whatever a workflow names. |
 | Civitai API key | empty | Needed for most Civitai downloads. Create one under Account Settings > API Keys on civitai.com. Stored on the server, shown masked once saved. Clear the field to remove it. |
 | Download folder | `auto_download` | Where downloads go when the row's own folder doesn't exist here. Always inside your LoRA folder. |
-| Match workflow folders | on | Downloads a `NSFW/foo` row into your existing `NSFW` folder, matched case-insensitively. |
+| Match workflow folders | on | Downloads a `Style/foo` row into your existing `Style` folder, matched case-insensitively. |
 
 The auto-download mode and the API key live on the server, not in ComfyUI's settings. They can only be changed from a browser or script running on the server machine itself. Anywhere else, the panel shows the current values, refuses changes, and explains why. On a remote server, set them with environment variables.
 
@@ -211,7 +211,7 @@ A manifest is also the allowlist for the **Manifest LoRAs only** download mode. 
 
 ```json
 {"loras": [
-  {"name": "NSFW/foo.safetensors", "sha": "0123456789ab",
+  {"name": "Style/foo.safetensors", "sha": "0123456789ab",
    "civitai": "123456@654321", "size": 144703488,
    "triggers": ["foo"], "range": [-2, 3]}
 ]}
