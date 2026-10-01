@@ -2,6 +2,8 @@
 
 **A LoRA stack, library tool and API service for ComfyUI. Built for the Nodes 2.0 frontend and for libraries with thousands of LoRAs.**
 
+![The Slider Stack with five slider LoRAs, each with a strength field and a drag bar, and the trigger manager open on one of them showing its recommended range](docs/images/slider-stack.png)
+
 Two stack nodes hold as many LoRAs as you want in compact rows: a toggle, a searchable name, a strength field and a trigger manager. Behind them sits everything that usually breaks once a workflow leaves your machine: LoRAs filed under different names, LoRAs that aren't installed, and servers that have never seen your library.
 
 It was developed against a 2,000+ LoRA library and a game asset pipeline that drives ComfyUI over the API. It's made for power users who know what they want: people with big libraries, people who automate, and people who'd rather not fill their canvas with helper nodes.
@@ -48,9 +50,11 @@ Outputs are `model` (plus `clip` on the model+clip node), `report`, which lists 
 
 ## Working with the rows
 
+![The model+clip LoRA Stack with its advanced options shown, three rows, a green "IDs OK" badge, and the trigger manager open with a trigger pill, a custom-trigger field and two recommended ranges](docs/images/lora-stack.png)
+
 - **＋ Add Lora** opens the picker. A plain click adds that LoRA immediately. Ctrl/Cmd-click or the checkbox starts a multi-selection, and **Add selected** commits it. Filter down to a folder such as `Face\` and hit **Select all** to add the whole folder. Enter adds, Esc closes.
 - Batch-added rows on the slider node arrive at strength 0, so you can roster a bank at zero cost. Single adds and regular LoRAs arrive at 1.0. In exclusive mode, batch adds arrive switched off.
-- Click a row's name to swap the LoRA. ◀ ▶ step by 0.05, or 0.25 with Shift. Type in the field for exact values. ✕ removes the row.
+- Click a row's name to swap the LoRA. ◀ ▶ step by 0.05, or 0.25 with Shift. Type in the field for exact values, or click it and use the mouse wheel to step by 0.05. The wheel only adjusts a field you've clicked into, so scrolling over the node still zooms the canvas. ✕ removes the row.
 - **Toggle All** in the header turns everything on if anything is off, and everything off otherwise.
 - **T** opens the trigger manager: each trained word as a toggleable pill, your own custom triggers, the recommended strength range, a **Fetch from Civitai** button, and a link to the LoRA's Civitai page. The button glows when the row has a saved selection.
 - The **ID** button in the header shows whether every row has an identity stamp, which lets other machines find or download that row's LoRA. Green **✓ IDs OK** means there's nothing to do. Amber **Stamp N IDs** means some rows still need one: hover to see which, and click to add them. Rows are also stamped automatically when added and when the workflow runs, so it rarely stays amber.
@@ -105,6 +109,8 @@ Wire each stack's `triggers` output into the next stack's `triggers` input, alon
 ### Slider banks
 
 The slider stack is model-only, so it never touches CLIP. Batch-added rows arrive at strength 0, so you can load a folder of sliders as a roster and dial in only the ones you use. Negative strengths work. A known recommended range keeps the ◀ ▶ arrows inside it, and typed values are never clamped.
+
+Each row on the slider stack also gets a **slider bar** under its name. Drag it, or click it and use the mouse wheel. Its ends are the LoRA's recommended range, so setting or fetching a range in the T popup reshapes the bar. With no range known it spans -3 to 3, and it always stretches to include a value you typed. A tick marks 0, the neutral point for most sliders. Turn the bars off under **Settings > LoRA Wrangler > Slider Stack**.
 
 ### Stop or carry on
 

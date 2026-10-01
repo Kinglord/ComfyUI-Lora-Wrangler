@@ -173,6 +173,49 @@ function fmt(v) {
   return s === "-0.00" ? "0.00" : s;
 }
 
+// One strength step (0.05, or 0.25 for big steps), kept inside bounds.
+function stepStrength(v, dir, big, bounds) {
+  let n = Math.round((v + dir * (big ? 0.25 : 0.05)) * 100) / 100;
+  if (bounds) n = Math.min(bounds[1], Math.max(bounds[0], n));
+  return n;
+}
+
+// The wheel steps a value only while its field has focus. Unfocused, the
+// canvas keeps the wheel; the frontend honours data-capture-wheel for that,
+// and still zooms on ctrl/cmd+wheel. Mouse wheels step once per notch,
+// trackpads once per ~50px of scrolling.
+function attachWheelStep(el, onStep) {
+  el.dataset.captureWheel = "true";
+  let acc = 0;
+  el.addEventListener("wheel", (e) => {
+    if (document.activeElement !== el || e.ctrlKey || e.metaKey) return;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    let dy = e.deltaY;
+    if (e.deltaMode === 0 && Math.abs(dy) < 50) {
+      acc += dy;
+      if (Math.abs(acc) < 50) return;
+      dy = acc;
+    }
+    acc = 0;
+    onStep(dy < 0 ? 1 : -1);
+  }, { passive: false });
+}
+
+// A tick at 0 on slider bars (neutral for most slider LoRAs); Chrome also
+// snaps to it when you drag close.
+const ZERO_TICK_ID = "lw-zero-tick";
+function ensureZeroTick() {
+  if (document.getElementById(ZERO_TICK_ID)) return;
+  const dl = document.createElement("datalist");
+  dl.id = ZERO_TICK_ID;
+  const opt = document.createElement("option");
+  opt.value = "0";
+  dl.appendChild(opt);
+  document.body.appendChild(dl);
+}
+
 // ---------------------------------------------------------------- trigger prefs
 
 let prefKeys = new Set();
@@ -220,6 +263,8 @@ const SETTING_AUTO = "LoraWrangler.AutoDownloadMode";
 const SETTING_KEY = "LoraWrangler.CivitaiKey";
 const SETTING_FOLDER = "LoraWrangler.DownloadFolder";
 const SETTING_MATCH = "LoraWrangler.MatchFolders";
+const SETTING_SLIDERS = "LoraWrangler.SliderBars";
+const DEFAULT_SLIDER_RANGE = [-3, 3];   // slider bar ends when no range is set
 const KEY_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 
 function toast(detail, severity = "info", life = 5000) {
@@ -350,6 +395,17 @@ const SETTINGS = [
       "NSFW/foo) and that folder already exists in your loras folder, " +
       "download straight into it instead of the download folder - the " +
       "two machines evidently share the same organisation.",
+  },
+  {
+    id: SETTING_SLIDERS,
+    name: "Show slider bars on the Slider Stack",
+    type: "boolean",
+    defaultValue: true,
+    category: ["LoRA Wrangler", "Slider Stack", "Slider bars"],
+    tooltip: "A drag bar under each slider row. Its ends are the LoRA's " +
+      "recommended range (set or fetch one with the T button), or -3 to 3 " +
+      "when none is known.",
+    onChange: () => controllers.forEach((c) => c.refresh()),
   },
 ];
 
@@ -536,6 +592,13 @@ const CSS = `
   -moz-appearance:textfield; appearance:textfield; }
 .lw-num::-webkit-inner-spin-button, .lw-num::-webkit-outer-spin-button {
   -webkit-appearance:none; margin:0; }
+/* slider bar spans the name and arrows: left of it the toggle (34px + 5px
+   gap), right of it the T and remove buttons (5 + 20 + 5 + 18px) */
+.lw-sliderbar { display:flex; align-items:center; height:14px;
+  padding:0 48px 0 39px; }
+.lw-sliderbar:not(.on) { opacity:.45; }
+.lw-range { width:100%; height:14px; margin:0; cursor:pointer;
+  accent-color:#5a5aad; }
 .lw-trig { flex:none; width:20px; height:22px; border:none; border-radius:4px;
   background:transparent; color:#777; cursor:pointer; padding:0;
   font-weight:700; font-size:12px; }
@@ -689,7 +752,7 @@ function openModalPanel(anchor, className) {
 // Trigger management popup: pills for each known trigger; selection is
 // written into the row's "# triggers: ..." annotation (absent = all,
 // empty = none), which is what the backend's triggers output honors.
-async function openTriggerPopup(anchor, row, sync, onAnnChanged) {
+async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged) {
   const panel = openModalPanel(anchor, "lw-trigpop");
 
   const head = document.createElement("div");
@@ -745,6 +808,7 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged) {
           if (curRange) prefRanges[d.key] = curRange;
           else delete prefRanges[d.key];
         }
+        onRangeChanged?.();
       }
     } catch (err) {
       console.error("[LoRA Wrangler] range save failed", err);
@@ -935,6 +999,7 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged) {
           curRange = d.range;
           curRangeSrc = d.source || "civitai";
           if (d.resolved) prefRanges[d.resolved.replace(/\\/g, "/").toLowerCase()] = d.range;
+          onRangeChanged?.();
           renderPills();
           return;
         } else {
@@ -1361,7 +1426,12 @@ app.registerExtension({
 
       const visRows = () =>
         rows.filter((r) => r.passthrough === undefined).length;
-      const uiHeight = () => 28 /*header*/ + visRows() * 28 + 30 /*add*/ + 8;
+      const sliderBars = () => cls === "SliderLoraStack" &&
+        app.ui.settings.getSettingValue(SETTING_SLIDERS) !== false;
+      // each row is 24px + 4px gap; a slider bar adds 14px + 4px gap
+      const uiHeight = () => 28 /*header*/ +
+        visRows() * (28 + (sliderBars() ? 18 : 0)) + 30 /*add*/ + 8;
+      if (cls === "SliderLoraStack") ensureZeroTick();
 
       const domWidget = node.addDOMWidget("lora_wrangler_ui", "LW_UI", root, {
         serialize: false,
@@ -1440,6 +1510,7 @@ app.registerExtension({
           const el = root.querySelector(".lw-status");
           if (el) { el.textContent = statusText; el.title = statusText; }
         },
+        refresh() { render(); grow(); },
       };
       const registerCtl = () => controllers.set(String(node.id), ctl);
       registerCtl();
@@ -1571,6 +1642,7 @@ app.registerExtension({
           // shows independent M / C fields (no arrows, labels instead)
           const rng = rangeFor(row.name);
           const rngText = rng ? ` (rec. ${rng[0]}..${rng[1]})` : "";
+          let bar = null;      // this row's slider bar, if shown
           const mkNum = (get, set, title) => {
             const inp = document.createElement("input");
             inp.className = "lw-num";
@@ -1578,11 +1650,16 @@ app.registerExtension({
             inp.step = "0.05";
             if (rng) { inp.min = rng[0]; inp.max = rng[1]; }
             inp.value = fmt(get());
-            inp.title = title + rngText;
+            inp.title = title + rngText + " — click, then scroll to adjust";
             inp.addEventListener("keydown", (e) => e.stopPropagation());
             inp.addEventListener("change", () => {
               const v = parseFloat(inp.value);
               if (isFinite(v)) set(v);
+              inp.value = fmt(get());
+              sync();
+            });
+            attachWheelStep(inp, (dir) => {
+              set(stepStrength(get(), dir, false, rng));
               inp.value = fmt(get());
               sync();
             });
@@ -1607,9 +1684,20 @@ app.registerExtension({
               "clip strength");
             strengthEls.push(lm, numM, lc, numC);
           } else {
+            // the number field, arrows and slider bar all go through here
+            const setBoth = (v) => {
+              row.strength = v;
+              row.strengthClip = v;
+              if (bar) {
+                // a typed value outside the bar's ends widens the bar
+                if (v < parseFloat(bar.min)) bar.min = v;
+                if (v > parseFloat(bar.max)) bar.max = v;
+                bar.value = v;
+              }
+            };
             const both = mkNum(
               () => row.strength,
-              (v) => { row.strength = v; row.strengthClip = v; },
+              setBoth,
               row.strengthClip !== undefined &&
               fmt(row.strengthClip) !== fmt(row.strength)
                 ? `M ${fmt(row.strength)} / C ${fmt(row.strengthClip)} \u2014 editing sets both`
@@ -1620,18 +1708,44 @@ app.registerExtension({
               b.textContent = dir < 0 ? "\u25C0" : "\u25B6";
               b.title = "step 0.05 (shift: 0.25)";
               b.addEventListener("click", (e) => {
-                const step = e.shiftKey ? 0.25 : 0.05;
-                let v = Math.round((row.strength + dir * step) * 100) / 100;
-                if (rng) v = Math.min(rng[1], Math.max(rng[0], v));
-                row.strength = v;
-                row.strengthClip = v;
-                both.value = fmt(v);
+                setBoth(stepStrength(row.strength, dir, e.shiftKey, rng));
+                both.value = fmt(row.strength);
                 both.title = "strength (model & clip)" + rngText;
                 sync();
               });
               return b;
             };
             strengthEls.push(mkArrow(-1), both, mkArrow(1));
+
+            if (sliderBars()) {
+              const [lo, hi] = rng || DEFAULT_SLIDER_RANGE;
+              bar = document.createElement("input");
+              bar.type = "range";
+              bar.className = "lw-range";
+              bar.step = "0.05";
+              bar.min = Math.min(lo, row.strength);
+              bar.max = Math.max(hi, row.strength);
+              bar.value = row.strength;
+              bar.setAttribute("list", ZERO_TICK_ID);
+              bar.title = (rng
+                ? `recommended range ${lo}..${hi}`
+                : `no range known, showing ${lo}..${hi}; set one with T`) +
+                " \u2014 drag, or click then scroll";
+              bar.addEventListener("keydown", (e) => e.stopPropagation());
+              bar.addEventListener("input", () => {
+                const v = Math.round(parseFloat(bar.value) * 100) / 100;
+                row.strength = v;
+                row.strengthClip = v;
+                both.value = fmt(v);
+              });
+              bar.addEventListener("change", () => sync());
+              attachWheelStep(bar, (dir) => {
+                setBoth(stepStrength(row.strength, dir, false,
+                  [parseFloat(bar.min), parseFloat(bar.max)]));
+                both.value = fmt(row.strength);
+                sync();
+              });
+            }
           }
 
           const trigBtn = document.createElement("button");
@@ -1644,7 +1758,7 @@ app.registerExtension({
             e.stopPropagation();
             openTriggerPopup(trigBtn, row, sync, (hasAnn) => {
               trigBtn.classList.toggle("ann", hasAnn);
-            });
+            }, () => { render(); grow(); });
           });
 
           const del = document.createElement("button");
@@ -1660,6 +1774,12 @@ app.registerExtension({
 
           div.append(toggle, name, ...strengthEls, trigBtn, del);
           root.appendChild(div);
+          if (bar) {
+            const wrap = document.createElement("div");
+            wrap.className = "lw-sliderbar" + (row.on ? " on" : "");
+            wrap.appendChild(bar);
+            root.appendChild(wrap);
+          }
         });
 
         // ---- add button --------------------------------------------------
