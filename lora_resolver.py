@@ -221,18 +221,25 @@ def get_cache():
 
 _last_save = 0.0
 _dirty = False
+_flush_timer = None
 SAVE_INTERVAL = 2.0     # bulk hashing must not rewrite the file per lora
 
 
 def save_cache(force=False):
-    """Write the cache; bursts are coalesced to one write per SAVE_INTERVAL
-    (flush_cache() or force=True writes pending changes immediately)."""
-    global _last_save, _dirty
+    """Write the cache; bursts are coalesced to one write per SAVE_INTERVAL.
+    A deferred write always lands SAVE_INTERVAL later, so a lookup is never
+    left waiting for a clean shutdown. flush_cache() or force=True writes
+    pending changes immediately."""
+    global _last_save, _dirty, _flush_timer
     with _cache_lock:
         cache = get_cache()
         now = time.time()
         if not force and now - _last_save < SAVE_INTERVAL:
             _dirty = True
+            if _flush_timer is None:
+                _flush_timer = threading.Timer(SAVE_INTERVAL, _timed_flush)
+                _flush_timer.daemon = True
+                _flush_timer.start()
             return
         try:
             tmp = FETCH_CACHE_FILE + ".tmp"
@@ -249,6 +256,13 @@ def flush_cache():
     """Write out anything a debounced save left pending."""
     if _dirty:
         save_cache(force=True)
+
+
+def _timed_flush():
+    global _flush_timer
+    with _cache_lock:
+        _flush_timer = None
+        flush_cache()
 
 
 import atexit
