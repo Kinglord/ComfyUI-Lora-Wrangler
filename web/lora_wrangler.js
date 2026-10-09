@@ -618,6 +618,8 @@ const CSS = `
 .lw-trigpop-link.off:hover { background:transparent; }
 .lw-pills { display:flex; flex-wrap:wrap; gap:5px; max-height:40vh;
   overflow-y:auto; }
+.lw-pills-label { margin:8px 0 4px; color:#8a8a98; font-size:11px;
+  cursor:help; user-select:none; }
 .lw-pill { padding:2px 10px; border-radius:11px; cursor:pointer;
   border:1px solid var(--border-color, #4e4e4e); user-select:none;
   color:#9a9aa8; background:transparent; font-size:12px; }
@@ -784,10 +786,12 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
   panel.append(head, body);
 
   let known = [];
+  let defaults = [];        // what a run uses with no saved selection
+  let civitaiChecked = false;
   let customs = [];
   let saved = null;         // globally saved selection from the backend
   let savedCustoms = null;  // full saved custom roster (on and off)
-  let source = null;        // where the known triggers came from
+  let source = null;        // where the default triggers came from
   let sel = null;           // Set
   let curRange = null;      // [lo, hi] or null
   let curRangeSrc = null;
@@ -818,9 +822,10 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
   const commit = async () => {
     const selKnown = known.filter((t) => sel.has(t));
     const selCustom = customs.filter((t) => sel.has(t));
-    // a toggled-off custom must keep the pref alive, or it would vanish
+    // matching what a run uses anyway saves nothing; a toggled-off custom
+    // must keep the pref alive, or it would vanish
     const isDefaultAll = customs.length === 0 &&
-      selKnown.length === known.length;
+      selKnown.length === defaults.length && defaults.every((t) => sel.has(t));
     const triggers = isDefaultAll ? null : selKnown.concat(selCustom);
 
     // Save globally; only claim success when the backend confirms it.
@@ -889,7 +894,9 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       pill.textContent = t;
       pill.title = isCustom
         ? "custom \u2014 click to toggle, \u2715 to remove"
-        : "click to toggle";
+        : defaults.includes(t)
+          ? "click to toggle"
+          : "suggested by the author on Civitai, not in the file itself \u2014 click to include";
       pill.addEventListener("click", (e) => {
         e.stopPropagation();
         if (sel.has(t)) sel.delete(t);
@@ -913,7 +920,11 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       }
       return pill;
     };
-    known.forEach((t) => pills.appendChild(mk(t, false)));
+    // the triggers a run uses by default (and your customs) come first;
+    // Civitai words the file doesn't name get their own labelled group
+    const extras = known.filter((t) => !defaults.includes(t));
+    known.filter((t) => defaults.includes(t))
+      .forEach((t) => pills.appendChild(mk(t, false)));
     customs.forEach((t) => pills.appendChild(mk(t, true)));
     if (!known.length && !customs.length) {
       const note = document.createElement("div");
@@ -928,6 +939,18 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       srcNote.textContent =
         "inferred from dataset tag frequency \u2014 not declared triggers";
       body.appendChild(srcNote);
+    }
+    if (extras.length) {
+      const label = document.createElement("div");
+      label.className = "lw-pills-label";
+      label.textContent = "Author Suggested";
+      label.title = "Listed by the LoRA's author on Civitai but not in the " +
+        "file itself. Often example prompts, so they stay off unless you " +
+        "click them on.";
+      const extraPills = document.createElement("div");
+      extraPills.className = "lw-pills";
+      extras.forEach((t) => extraPills.appendChild(mk(t, false)));
+      body.append(label, extraPills);
     }
 
     const rowEl = document.createElement("div");
@@ -1039,37 +1062,43 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       body.appendChild(cRow);
     }
 
-    if (!known.length || source === "dataset-tags") {
+    // Offer Civitai until this file has been looked up there, even when the
+    // file names its own triggers: Civitai often lists more.
+    if (!known.length || source === "dataset-tags" || !civitaiChecked) {
       const fRow = document.createElement("div");
       fRow.className = "lw-trigpop-row";
       const fBtn = document.createElement("button");
       fBtn.className = "lw-trigpop-btn";
       fBtn.textContent = source === "dataset-tags"
         ? "Check Civitai for declared triggers"
-        : "Fetch from Civitai";
+        : known.length ? "Check Civitai for more triggers"
+          : "Fetch from Civitai";
       fBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         fBtn.disabled = true;
         fBtn.textContent = "fetching\u2026";
+        const wasGuess = !known.length || source === "dataset-tags";
         try {
           const r = await api.fetchApi(
             "/lora_wrangler/triggers?fetch=1&name=" +
             encodeURIComponent(row.name));
           const d = await r.json();
           known = d.triggers || [];
+          defaults = (d.default || known).slice();
+          civitaiChecked = true;
           if (d.civitai_url) setPage(d.civitai_url);
           const newSource = d.source || null;
-          if (newSource === "civitai") {
-            // declared triggers replace the inference wholesale; stale
-            // inferred tags must not survive into the selection as customs
-            sel = new Set(known);
+          if (wasGuess && newSource === "civitai") {
+            // declared triggers replace a guess wholesale; stale inferred
+            // tags must not survive into the selection as customs
+            sel = new Set(defaults);
             customs = [];
-          } else {
-            known.forEach((t) => sel.add(t));
+            commit();
           }
+          // otherwise the selection stands: Civitai's extra words arrive
+          // switched off, so what runs doesn't change behind your back
           source = newSource;
         } catch (err) { console.error("[LoRA Wrangler] fetch", err); }
-        commit();
         renderPills();
       });
       fRow.appendChild(fBtn);
@@ -1082,6 +1111,8 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       "/lora_wrangler/triggers?fetch=0&name=" + encodeURIComponent(row.name));
     const d = await r.json();
     known = (d.triggers || []).slice();
+    defaults = (d.default || known).slice();
+    civitaiChecked = !!d.civitai_checked || !!d.virtual;
     saved = d.selected != null ? d.selected.slice() : null;
     savedCustoms = d.customs != null ? d.customs.slice() : null;
     source = d.source || null;
@@ -1119,7 +1150,7 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       if (!known.includes(t) && !customs.includes(t)) customs.push(t);
     });
   } else {
-    sel = new Set(known);                     // never customized: all
+    sel = new Set(defaults);                  // never customized: what runs
   }
   renderPills();
 }

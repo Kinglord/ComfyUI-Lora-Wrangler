@@ -74,6 +74,8 @@ Each LoRA's triggers are resolved from the first source that has any:
 
 A file's hash is computed once and cached, and a successful Civitai lookup is written back as a `.civitai.info` sidecar. Each file touches the network at most once. Unknown files are re-checked weekly, and network failures never fail a run.
 
+Civitai often lists more trained words than a file names itself, and some are whole example prompts. When a file declares its own triggers, a run uses those, and the T popup offers **Check Civitai for more triggers**. Civitai's extra words then appear under **Author Suggested**, switched off until you click them on. Trained words are split on commas only when every part is a short tag, so example sentences stay whole.
+
 ### Recommended strength ranges
 
 The T popup has a **Range** row. Set it by hand, or hit **Fetch range** to search the LoRA's Civitai description for phrases like `-2 to 3`, `between -5 and 10` or `±4`. When a description lists several ranges, such as a safe and a max range, each becomes a clickable chip with the safe one selected. A known range clamps the ◀ ▶ buttons and shows in the tooltip. Typed values are never clamped, and hand-set ranges are never overwritten by a fetch.

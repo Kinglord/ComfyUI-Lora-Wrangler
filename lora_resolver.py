@@ -330,10 +330,19 @@ def _get_json(url, timeout=15):
 
 
 def split_trained_words(items):
+    """Trained words arrive as tag lists ("a, b, c") or as whole example
+    phrases. An entry is split on commas only when every part is a short
+    tag, so sentences stay intact. Deduplicated, capped at 8."""
     out = []
     for t in items or []:
-        out += [x.strip() for x in str(t).split(",")]
-    return [w for w in out if w][:8]
+        t = str(t).strip()
+        parts = [x.strip() for x in t.split(",") if x.strip()]
+        if parts and all(len(p.split()) <= 4 for p in parts):
+            words = parts
+        else:
+            words = [t.rstrip(", ")] if t.rstrip(", ") else []
+        out += [w for w in words if w not in out]
+    return out[:8]
 
 
 def pick_file(files, sha=None):

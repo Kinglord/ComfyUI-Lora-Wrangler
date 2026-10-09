@@ -329,15 +329,12 @@ def resolve_declared_src(lora_path):
                 data = json.load(f)
             tw = data.get("trainedWords") or data.get("triggerWords")
             if isinstance(tw, list) and tw:
-                out = []
-                for t in tw:
-                    out += [x.strip() for x in str(t).split(",")]
-                out = [t for t in out if t]
+                out = _split_trained_words(tw)
                 if out:
-                    return out[:8], "sidecar-json"
+                    return out, "sidecar-json"
             at = data.get("activation text")
             if isinstance(at, str) and at.strip():
-                got = [t.strip() for t in at.split(",") if t.strip()][:8]
+                got = _split_trained_words([at])
                 if got:
                     return got, "sidecar-json"
         except Exception:
@@ -346,7 +343,7 @@ def resolve_declared_src(lora_path):
         md = _read_safetensors_metadata(lora_path)
         tp = md.get("modelspec.trigger_phrase")
         if isinstance(tp, str) and tp.strip():
-            got = [t.strip() for t in tp.split(",") if t.strip()][:8]
+            got = _split_trained_words([tp])
             if got:
                 return got, "modelspec"
     return [], None
@@ -406,12 +403,14 @@ def _write_info_sidecar(path, ent):
         pass  # read-only share etc.; json cache still covers us
 
 
-def fetch_civitai_triggers(path):
+def fetch_civitai_triggers(path, write_sidecar=True):
     """Look up trainedWords on Civitai by file SHA256.
 
     Persistent caching (hash results and 404s), sidecar write-back on
     success so future runs never touch the network, short back-off after
-    network failures. Never raises.
+    network failures. write_sidecar=False for files that declare their own
+    triggers: a sidecar would outrank them and change what runs use.
+    Never raises.
     """
     try:
         sha = _sha256_of(path)
@@ -422,7 +421,7 @@ def fetch_civitai_triggers(path):
             log.info(f"civitai: no entry for {os.path.basename(path)}")
             return []
         words = list(ent.get("words") or [])
-        if words or ent.get("version_id"):
+        if write_sidecar and (words or ent.get("version_id")):
             _write_info_sidecar(path, ent)
         if words:
             log.info(f"civitai triggers for {os.path.basename(path)}: "
@@ -1336,21 +1335,28 @@ def triggers_endpoint_payload(name, do_fetch):
         path = folder_paths.get_full_path("loras", resolved)
         if path is None:
             return {"triggers": [], "error": f"'{resolved}' has no path"}
-        trigs, source = resolve_declared_src(path)
-        if not trigs:
-            trigs = cached_civitai_triggers(path)
-            if trigs:
-                source = "civitai"
+        local, source = resolve_declared_src(path)
+        civ = cached_civitai_triggers(path)
         fetched = False
-        if not trigs and do_fetch:
-            trigs = fetch_civitai_triggers(path)
+        if do_fetch:
+            civ = fetch_civitai_triggers(path, write_sidecar=not local) or civ
             fetched = True
-            if trigs:
-                source = "civitai"
-        if not trigs:
-            trigs = infer_dataset_tags(path)
-            source = "dataset-tags" if trigs else None
-        return {"triggers": trigs, "resolved": resolved, "fetched": fetched,
+        # "default" is what a run uses when no selection is saved: the
+        # file's own triggers first, Civitai's otherwise. "triggers" adds
+        # any further words Civitai lists, which the popup shows switched
+        # off: they are often long example prompts.
+        default = local
+        if not default and civ:
+            default, source = civ, "civitai"
+        if not default:
+            default = infer_dataset_tags(path)
+            source = "dataset-tags" if default else None
+        known = list(default) + [w for w in civ if w not in default]
+        sha = _lr.cached_sha256(path)
+        return {"triggers": known, "default": default,
+                "resolved": resolved, "fetched": fetched,
+                "civitai_checked": bool(sha) and
+                lookup_by_hash(sha, allow_network=False) is not None,
                 "selected": trigger_pref_for(resolved),
                 "customs": trigger_pref_customs_for(resolved),
                 "source": source, "civitai_url": cached_civitai_page(path),
