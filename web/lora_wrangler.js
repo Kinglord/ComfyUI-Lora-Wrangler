@@ -1477,8 +1477,12 @@ app.registerExtension({
 
       hideWidget(lorasWidget);
 
+      // the text the rows were last drawn from or written to; anything else
+      // arriving through the widget came from outside this UI
+      let shownText = lorasWidget.value;
       const sync = () => {
         lorasWidget.value = renderText(rows);
+        shownText = lorasWidget.value;
         try { lorasWidget.callback?.(lorasWidget.value); } catch (e) {}
         try { node.graph?.setDirtyCanvas?.(true, true); } catch (e) {}
       };
@@ -1563,8 +1567,10 @@ app.registerExtension({
         } catch (e) {}
       };
 
+      // Builds off-screen and swaps in only when complete, so a failure
+      // keeps what was there instead of leaving the node blank.
       const render = () => {
-        root.replaceChildren();
+        const ui = document.createDocumentFragment();
 
         // ---- header: master toggle --------------------------------------
         const header = document.createElement("div");
@@ -1638,7 +1644,7 @@ app.registerExtension({
           }
           header.appendChild(idBtn);
         }
-        root.appendChild(header);
+        ui.appendChild(header);
 
         // ---- lora rows ---------------------------------------------------
         rows.forEach((row, idx) => {
@@ -1808,12 +1814,12 @@ app.registerExtension({
           });
 
           div.append(toggle, name, ...strengthEls, trigBtn, del);
-          root.appendChild(div);
+          ui.appendChild(div);
           if (bar) {
             const wrap = document.createElement("div");
             wrap.className = "lw-sliderbar" + (row.on ? " on" : "");
             wrap.appendChild(bar);
-            root.appendChild(wrap);
+            ui.appendChild(wrap);
           }
         });
 
@@ -1853,14 +1859,20 @@ app.registerExtension({
             },
           });
         });
-        root.appendChild(add);
+        ui.appendChild(add);
+        root.replaceChildren(ui);
+      };
+
+      const safeRender = (why) => {
+        try { render(); grow(); }
+        catch (e) { console.error(`[LoRA Wrangler] couldn't draw node ${node.id} (${why})`, e); }
       };
 
       if (sepWidget) {
         const prevCb = sepWidget.callback;
         sepWidget.callback = function (...args) {
           const r = prevCb?.apply(this, args);
-          try { render(); grow(); } catch (e) {}
+          safeRender("clip strength toggle");
           return r;
         };
       }
@@ -1872,20 +1884,32 @@ app.registerExtension({
       });
       getManifest().then((entries) => {
         virtualNames = (entries || []).filter((e) => !e.local).map((e) => e.name);
-        if (virtualNames.length) { try { render(); } catch (e) {} }
+        if (virtualNames.length) safeRender("manifest loaded");
       });
-      loadPrefKeys().then(() => { try { render(); } catch (e) {} });
+      loadPrefKeys().then(() => safeRender("saved prefs loaded"));
       render();
 
       const onConfigure = node.onConfigure;
       node.onConfigure = function (...args) {
         onConfigure?.apply(this, args);
-        try {
-          rows = parseText(lorasWidget.value);
-          registerCtl();
-          render();
-          grow();
-        } catch (e) {}
+        rows = parseText(lorasWidget.value);
+        shownText = lorasWidget.value;
+        registerCtl();
+        safeRender("workflow loaded");
+      };
+
+      // Images that carry only an API prompt (anything queued through the
+      // API) are rebuilt without onConfigure: the frontend sets the widget's
+      // value and calls its callback instead. Redraw on any outside change.
+      const textCb = lorasWidget.callback;
+      lorasWidget.callback = function (...args) {
+        const r = textCb?.apply(this, args);
+        if (lorasWidget.value !== shownText) {
+          shownText = lorasWidget.value;
+          rows = parseText(shownText);
+          safeRender("value set from outside");
+        }
+        return r;
       };
     } catch (err) {
       console.error("[LoRA Wrangler] row UI failed, falling back to text widget:", err);
