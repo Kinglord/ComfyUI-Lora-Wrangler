@@ -279,10 +279,14 @@ function toast(detail, severity = "info", life = 5000) {
 // panel only mirrors them. Changes are POSTed to the node, which accepts
 // them only from the server machine itself; anything the server refuses is
 // reverted in the panel. The key is shown as a mask (dots + last 4).
+// The settings store also calls onChange once when a setting is registered,
+// with no old value; that is a page load, not the user, so it is ignored.
 let syncing = false;
 async function setQuietly(id, value) {
   syncing = true;
-  try { await app.ui.settings.setSettingValue(id, value); }
+  // the settings store's own set(): app.ui.settings.setSettingValue doesn't
+  // wait for onChange, which would run after syncing is already off
+  try { await app.extensionManager.setting.set(id, value); }
   finally { syncing = false; }
 }
 
@@ -296,7 +300,7 @@ async function postServerSetting(body) {
 }
 
 async function onKeyChange(value, oldValue) {
-  if (syncing || value === undefined || value === null) return;
+  if (syncing || oldValue === undefined || value === undefined || value === null) return;
   const v = String(value).trim();
   if (v.startsWith(KEY_MASK)) return;                 // already masked
   if (v === "" && !(oldValue && String(oldValue).trim())) return;
@@ -317,7 +321,7 @@ async function onKeyChange(value, oldValue) {
 }
 
 async function onAutoChange(value, oldValue) {
-  if (syncing || value === undefined || value === null) return;
+  if (syncing || oldValue === undefined || value === undefined || value === null) return;
   try {
     const d = await postServerSetting({ auto_download: value });
     if (d.ok) {
