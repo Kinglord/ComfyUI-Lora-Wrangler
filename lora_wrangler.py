@@ -1555,6 +1555,67 @@ def manifest_payload():
         return {"entries": [], "error": str(e), "version": __version__}
 
 
+def prefs_push_payload(data):
+    """Replace this server's trigger_prefs.json (saved trigger picks, custom
+    triggers and ranges) with one pushed from another machine. Off unless
+    LORA_WRANGLER_ALLOW_PREFS_PUSH is set; the previous file is kept as
+    trigger_prefs.json.bak. Takes effect without a restart."""
+    global _trigger_prefs
+    if not _lr.prefs_push_allowed():
+        return {"ok": False, "disabled": True,
+                "error": "prefs push is disabled on this server; copy "
+                         "trigger_prefs.json into the node's folder and "
+                         "restart, or set LORA_WRANGLER_ALLOW_PREFS_PUSH=1 in "
+                         "the server's environment to allow it"}
+    if not (isinstance(data, dict) and all(isinstance(v, dict) for v in data.values())):
+        return {"ok": False, "error": "expected the contents of a trigger_prefs.json file"}
+    try:
+        if os.path.isfile(_PREFS_FILE):
+            os.replace(_PREFS_FILE, _PREFS_FILE + ".bak")
+        tmp = _PREFS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1)
+        os.replace(tmp, _PREFS_FILE)
+    except OSError as e:
+        return {"ok": False, "error": str(e)}
+    _trigger_prefs = data
+    log.info(f"trigger prefs replaced by a push ({len(data)} loras)")
+    return {"ok": True, "entries": len(data)}
+
+
+def sync_payload(target):
+    """Send this machine's LoRA list and trigger picks to another server: a
+    manifest of the LoRAs used here (hashed or looked up on Civitai), saved
+    there as manifests/sync.json, and trigger_prefs.json, replacing its own.
+    The target needs LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1 and
+    LORA_WRANGLER_ALLOW_PREFS_PUSH=1."""
+    target = (target or "").strip().rstrip("/")
+    if not target.startswith(("http://", "https://")):
+        return {"ok": False, "error": "set a target server such as http://render-box:8188"}
+    manifest = manifest_export_payload(only_info=True, only_known=True)
+    if manifest.get("error"):
+        return {"ok": False, "error": f"building the manifest failed: {manifest['error']}"}
+    results = {}
+    for what, path, body in (
+            ("manifest", "/lora_wrangler/manifest", {"name": "sync", "manifest": manifest}),
+            ("prefs", "/lora_wrangler/prefs", _get_trigger_prefs())):
+        req = urllib.request.Request(
+            target + path, data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json", "User-Agent": _lr.USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                results[what] = json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            results[what] = {"ok": False, "error": f"{target} answered HTTP {e.code}"
+                             + (" - is LoRA Wrangler up to date there?" if e.code == 404 else "")}
+        except (OSError, ValueError) as e:
+            results[what] = {"ok": False, "error": f"couldn't reach {target}: {e}"}
+    ok = all(r.get("ok") for r in results.values())
+    log.info(f"sync to {target}: " + ", ".join(
+        f"{k} {'ok' if v.get('ok') else 'failed'}" for k, v in results.items()))
+    return {"ok": ok, "target": target, **results}
+
+
 def manifest_save_payload(name, data):
     if not _lr.manifest_push_allowed():
         return {"ok": False, "disabled": True,
@@ -1859,6 +1920,29 @@ try:
         payload = await asyncio.get_event_loop().run_in_executor(
             None, manifest_payload)
         return web.json_response(payload)
+
+    @PromptServer.instance.routes.post("/lora_wrangler/sync")
+    async def _lw_sync(request):
+        # sends this machine's data to another server: only its own user may
+        if not _from_this_machine(request):
+            return web.json_response({
+                "ok": False, "local_only": True,
+                "error": "sync can only be started from a browser on this machine"})
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "bad json"})
+        payload = await asyncio.get_event_loop().run_in_executor(
+            None, sync_payload, str(data.get("target") or ""))
+        return web.json_response(payload)
+
+    @PromptServer.instance.routes.post("/lora_wrangler/prefs")
+    async def _lw_prefs_push(request):
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "bad json"})
+        return web.json_response(prefs_push_payload(data))
 
     @PromptServer.instance.routes.post("/lora_wrangler/manifest")
     async def _lw_manifest_save(request):

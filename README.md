@@ -204,6 +204,7 @@ Environment variables override the settings:
 | `LORA_WRANGLER_MATCH_FOLDERS=0` | Turns folder matching off. |
 | `LORA_WRANGLER_MANIFESTS` | Extra manifest files or folders, separated by `;`. |
 | `LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1` | Allows installing manifests over the API. Off by default. |
+| `LORA_WRANGLER_ALLOW_PREFS_PUSH=1` | Allows replacing the saved trigger picks and ranges over the API. Off by default. |
 
 ## Manifests
 
@@ -230,6 +231,22 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8188/lora_wrangler/manifest/export?info
 On a large library, always filter the export. `info=1` keeps LoRAs with a `.civitai.info` sidecar, which are the ones you've actually used. `known=1` keeps LoRAs the node has already hashed. `folder=` narrows either one. An unfiltered export hashes and looks up every file once, so it refuses to run on more than 500 LoRAs unless you add `all=1`. Progress is logged to the ComfyUI console, `GET /lora_wrangler/manifest/export/status` reports it, and `POST /lora_wrangler/manifest/export/cancel` stops it. Closing the browser tab does not.
 
 **Install it by copying the file** into a `manifests` folder inside this node's folder on the target server. It is picked up without a restart. Refresh the browser to see it in the picker. Several files merge, and later file names win on a duplicate LoRA name. To update, export again and overwrite the file.
+
+**Sync from your dev box.** If you build workflows on one machine and run them on another, **Settings > LoRA Wrangler > Sync** sends both pieces in one click. Set **Sync target server** to the other machine's address, such as `http://render-box:8188` (a Tailscale name works), then press **Sync now**. It sends:
+
+- a manifest of the LoRAs you've used on this machine, meaning any LoRA the node has hashed or looked up, saved on the server as `manifests/sync.json`;
+- your trigger picks, custom triggers and slider ranges, replacing the server's, with its old copy kept as `trigger_prefs.json.bak`.
+
+The server needs `LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1` and `LORA_WRANGLER_ALLOW_PREFS_PUSH=1`, and the button only works from a browser on the machine doing the sending.
+
+**Your trigger picks and slider ranges** live in `trigger_prefs.json` in each machine's node folder, separate from the manifest. Besides Sync, you can copy that file over and restart ComfyUI there, or push it from a script:
+
+```python
+from api_helper import push_prefs
+push_prefs("http://render-box:8188")    # sends the trigger_prefs.json next to api_helper.py
+```
+
+Pushing needs `LORA_WRANGLER_ALLOW_PREFS_PUSH=1` on the server. It replaces the server's file, keeps the old one as `trigger_prefs.json.bak`, and applies without a restart; refresh the browser to see it. Settings match LoRAs by their path inside the loras folder, so a LoRA the server downloaded into `auto_download` picks them up once you move it into the same folder it has on your machine.
 
 ## Automation: API and agents
 
@@ -273,7 +290,7 @@ The `set_` functions and `zero_all` edit lines in place, keeping row order, comm
 | --- | --- |
 | Edit a workflow, no server needed | `find_stack_node`, `get_stack`, `render`, `set_strength`, `set_many`, `set_enabled`, `set_solo`, `zero_all`, `get_stamp`, `set_stamp` |
 | Ask a server | `list_loras`, `get_range`, `set_range`, `civitai_status`, `set_civitai_key`, `check_stack`, `download_missing`, `stamp_stack` |
-| Manifests | `get_manifest`, `export_manifest`, `push_manifest` |
+| Manifests and prefs | `get_manifest`, `export_manifest`, `push_manifest`, `push_prefs` |
 
 ### One workflow, many servers
 
@@ -302,6 +319,8 @@ for host in servers:                                          # optional warm-up
 | `GET` / `POST /lora_wrangler/civitai_key` | Whether a key is set and the auto-download mode, or change them with `{"key"}` or `{"auto_download": "off" \| "manifest" \| "any"}`. Changes are accepted only from the server machine. The key is never returned. |
 | `GET /lora_wrangler/manifest` | Every manifest entry, and whether this server has it. |
 | `POST /lora_wrangler/manifest` | Install a manifest. Needs `LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1`. |
+| `POST /lora_wrangler/prefs` | Replace the saved trigger picks and ranges with a pushed `trigger_prefs.json`. Needs `LORA_WRANGLER_ALLOW_PREFS_PUSH=1`. |
+| `POST /lora_wrangler/sync` | Send this machine's manifest and trigger picks to `{"target"}`. Accepted only from the machine itself. |
 | `GET /lora_wrangler/manifest/export` | Build a manifest from this server. Filters: `folder`, `search`, `info=1`, `known=1`, `all=1`. |
 | `GET .../export/status`, `POST .../export/cancel` | Watch or stop a running export. |
 
@@ -345,7 +364,7 @@ ComfyUI has no authentication. Anyone who can reach its port can queue workflows
 What protects you:
 
 - **Auto-download is off by default**, and only you can turn it on. The mode and the API key are stored on the server and change only from the server machine itself or through environment variables. ComfyUI's own settings store, which anyone can write to, has no say.
-- **Manifest mode is an allowlist.** The server downloads only files listed in its own manifests, and it fetches the manifest entry's file rather than whatever the workflow claims. Installing manifests over the API is disabled unless the server opts in with `LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1`.
+- **Manifest mode is an allowlist.** The server downloads only files listed in its own manifests, and it fetches the manifest entry's file rather than whatever the workflow claims. Installing manifests or replacing the saved trigger picks over the API is disabled unless the server opts in with `LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1` or `LORA_WRANGLER_ALLOW_PREFS_PUSH=1`.
 - **Only LoRAs, only safetensors, only two hosts.** Downloads come from civitai.com or huggingface.co. Civitai entries must be a LoRA, LoCon or DoRA with a `.safetensors` file, and each file is checked against Civitai's SHA256 before it is moved into place. A Hugging Face `url` is checked when the row or manifest also carries a `sha`, so always include one.
 - **Downloads stay inside your LoRA folder.** Nothing is overwritten, the download folder setting can't point elsewhere, and a download that won't fit on disk is refused before it starts.
 - **The key stays secret.** It never enters a workflow or image metadata, and no endpoint returns it.

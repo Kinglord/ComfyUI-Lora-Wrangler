@@ -530,6 +530,22 @@ def push_manifest(base_url="http://127.0.0.1:8188", manifest=None,
                       {"name": name, "manifest": manifest}, timeout)
 
 
+def push_prefs(base_url="http://127.0.0.1:8188", prefs=None, timeout=60):
+    """Replace a server's saved trigger picks, custom triggers and slider
+    ranges with this machine's. prefs is a dict, a path to a
+    trigger_prefs.json, or None for the one next to this file. Settings match
+    LoRAs by their path inside the loras folder. Disabled by default: the
+    server must run with LORA_WRANGLER_ALLOW_PREFS_PUSH=1. It keeps its
+    previous file as trigger_prefs.json.bak, and needs no restart."""
+    if prefs is None:
+        prefs = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "trigger_prefs.json")
+    if isinstance(prefs, str):
+        with open(prefs, "r", encoding="utf-8") as f:
+            prefs = json.load(f)
+    return _post_json(base_url, "/lora_wrangler/prefs", prefs, timeout)
+
+
 def export_manifest(base_url="http://127.0.0.1:8188", folder=None,
                     search=None, hash=True, network=True, only_info=False,
                     only_known=False, export_all=False, timeout=3600):

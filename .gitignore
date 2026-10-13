@@ -5,3 +5,4 @@ trigger_prefs.json
 __pycache__/
 *.pyc
 manifests/
+trigger_prefs.json.bak

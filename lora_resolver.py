@@ -162,6 +162,12 @@ def manifest_push_allowed():
     return _truthy(os.environ.get("LORA_WRANGLER_ALLOW_MANIFEST_PUSH", ""))
 
 
+def prefs_push_allowed():
+    """POST /lora_wrangler/prefs (replace the saved trigger picks and ranges)
+    is off unless the server's environment opts in, for the same reason."""
+    return _truthy(os.environ.get("LORA_WRANGLER_ALLOW_PREFS_PUSH", ""))
+
+
 def get_api_key():
     """(key, source) with source in {"env", "file"}, or (None, None)."""
     for name in ("CIVITAI_API_KEY", "CIVITAI_TOKEN", "CIVITAI_API_TOKEN"):

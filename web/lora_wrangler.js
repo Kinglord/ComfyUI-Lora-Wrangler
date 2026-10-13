@@ -264,6 +264,8 @@ const SETTING_KEY = "LoraWrangler.CivitaiKey";
 const SETTING_FOLDER = "LoraWrangler.DownloadFolder";
 const SETTING_MATCH = "LoraWrangler.MatchFolders";
 const SETTING_SLIDERS = "LoraWrangler.SliderBars";
+const SETTING_SYNC_TARGET = "LoraWrangler.SyncTarget";
+const SETTING_SYNC_NOW = "LoraWrangler.SyncNow";
 const DEFAULT_SLIDER_RANGE = [-3, 3];   // slider bar ends when no range is set
 const KEY_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 
@@ -411,7 +413,75 @@ const SETTINGS = [
       "when none is known.",
     onChange: () => controllers.forEach((c) => c.refresh()),
   },
+  {
+    id: SETTING_SYNC_TARGET,
+    name: "Sync target server",
+    type: "text",
+    defaultValue: "",
+    category: ["LoRA Wrangler", "Sync", "Target server"],
+    tooltip: "The ComfyUI server to send your LoRA list and trigger picks " +
+      "to, such as http://render-box:8188 (a Tailscale name works). It " +
+      "needs LORA_WRANGLER_ALLOW_MANIFEST_PUSH=1 and " +
+      "LORA_WRANGLER_ALLOW_PREFS_PUSH=1 in its environment.",
+  },
+  {
+    id: SETTING_SYNC_NOW,
+    name: "Sync to the target server",
+    type: renderSyncButton,
+    defaultValue: "",
+    category: ["LoRA Wrangler", "Sync", "Sync now"],
+    tooltip: "Sends a manifest of the LoRAs you've used here and your saved " +
+      "trigger picks and slider ranges, replacing the server's.",
+  },
 ];
+
+// Settings has no plain button type; a function type renders custom DOM.
+function renderSyncButton() {
+  const wrap = document.createElement("div");
+  wrap.style.cssText = "display:flex; align-items:center; gap:8px;";
+  const btn = document.createElement("button");
+  btn.textContent = "Sync now";
+  btn.style.cssText = "padding:4px 14px; border:none; border-radius:6px; " +
+    "background:#5a5aad; color:#fff; cursor:pointer;";
+  const status = document.createElement("span");
+  status.style.cssText = "font-size:12px; opacity:.75;";
+  btn.addEventListener("click", () => runSync(btn, status));
+  wrap.append(btn, status);
+  return wrap;
+}
+
+async function runSync(btn, status) {
+  const target = String(app.extensionManager.setting.get(SETTING_SYNC_TARGET) || "").trim();
+  if (!target) {
+    toast("Set the sync target server first, just above this button", "warn", 8000);
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = "syncing…";
+  try {
+    const r = await api.fetchApi("/lora_wrangler/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      status.textContent = "synced at " + new Date().toLocaleTimeString();
+      toast(`Synced to ${d.target}: ${d.manifest.entries} LoRAs in the ` +
+        `manifest, trigger picks for ${d.prefs.entries}`, "success", 8000);
+    } else {
+      const why = d.error ||
+        [d.manifest, d.prefs].filter((x) => x && !x.ok).map((x) => x.error).join("; ");
+      status.textContent = "failed";
+      toast("Sync failed: " + why, "error", 15000);
+    }
+  } catch (e) {
+    status.textContent = "failed";
+    toast("Sync failed: " + e, "error", 15000);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // node id -> {applyRowUpdates, setStatus}; the backend addresses the row
 // UI by the executing node's id
