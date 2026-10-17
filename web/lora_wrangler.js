@@ -941,6 +941,10 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       if (parseTriggerAnn(row.comment) !== null) {
         row.comment = withTriggerAnn(row.comment, null);
         sync();
+      } else {
+        // the workflow didn't change, so tell "Run (On Change)" ourselves;
+        // the other queue modes ignore this event
+        api.dispatchCustomEvent("autoQueueGraphChanged");
       }
     } else {
       // graceful degradation: keep the selection in the row's annotation so
@@ -1551,7 +1555,11 @@ app.registerExtension({
       // arriving through the widget came from outside this UI
       let shownText = lorasWidget.value;
       const sync = () => {
-        lorasWidget.value = renderText(rows);
+        // record first: assigning the value can call the widget's callback
+        // straight away, which would take this for an outside change and
+        // redraw the UI under the field being edited
+        shownText = renderText(rows);
+        lorasWidget.value = shownText;
         shownText = lorasWidget.value;
         try { lorasWidget.callback?.(lorasWidget.value); } catch (e) {}
         try { node.graph?.setDirtyCanvas?.(true, true); } catch (e) {}
