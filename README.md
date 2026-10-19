@@ -74,7 +74,7 @@ Each LoRA's triggers are resolved from the first source that has any:
 
 A file's hash is computed once and cached, and a successful Civitai lookup is written back as a `.civitai.info` sidecar. Each file touches the network at most once. Unknown files are re-checked weekly, and network failures never fail a run.
 
-Civitai often lists more trained words than a file names itself, and some are whole example prompts. When a file declares its own triggers, a run uses those, and the T popup offers **Check Civitai for more triggers**. Civitai's extra words then appear under **Author Suggested**, switched off until you click them on. Trained words are split on commas only when every part is a short tag, so example sentences stay whole.
+Civitai often lists more trained words than a file names itself, and some are whole example prompts. When a file declares its own triggers, a run uses those, and the T popup offers **Check Civitai for more triggers**. Civitai's extra words then appear under **Author Suggested**, switched off until you click them on. The check also reads the model and version descriptions, so tags an author left in a code block or after "Trigger words:", "Activation text:" or "Keywords:" join that group too (negative prompts and sampler settings are skipped). Trained words are split on commas only when every part is a short tag, so example sentences stay whole.
 
 ### Recommended strength ranges
 

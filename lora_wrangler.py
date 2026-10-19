@@ -1337,14 +1337,16 @@ def triggers_endpoint_payload(name, do_fetch):
             return {"triggers": [], "error": f"'{resolved}' has no path"}
         local, source = resolve_declared_src(path)
         civ = cached_civitai_triggers(path)
+        described = list((_lr.cached_entry(path) or {}).get("described") or [])
         fetched = False
         if do_fetch:
             civ = fetch_civitai_triggers(path, write_sidecar=not local) or civ
+            described = _lr.fetch_described(_lr.sha256_of(path))
             fetched = True
         # "default" is what a run uses when no selection is saved: the
         # file's own triggers first, Civitai's otherwise. "triggers" adds
-        # any further words Civitai lists, which the popup shows switched
-        # off: they are often long example prompts.
+        # any further words Civitai lists, and tags the author wrote into
+        # the description; the popup shows those switched off.
         default = local
         if not default and civ:
             default, source = civ, "civitai"
@@ -1352,11 +1354,15 @@ def triggers_endpoint_payload(name, do_fetch):
             default = infer_dataset_tags(path)
             source = "dataset-tags" if default else None
         known = list(default) + [w for w in civ if w not in default]
-        sha = _lr.cached_sha256(path)
+        seen = {k.lower() for k in known}
+        known += [w for w in described if w.lower() not in seen]
+        ent = _lr.cached_entry(path)
         return {"triggers": known, "default": default,
                 "resolved": resolved, "fetched": fetched,
-                "civitai_checked": bool(sha) and
-                lookup_by_hash(sha, allow_network=False) is not None,
+                # checked once the descriptions were read too (or the file
+                # isn't on Civitai), so older lookups offer the button again
+                "civitai_checked": bool(ent) and (
+                    bool(ent.get("missing")) or "described" in ent),
                 "selected": trigger_pref_for(resolved),
                 "customs": trigger_pref_customs_for(resolved),
                 "source": source, "civitai_url": cached_civitai_page(path),

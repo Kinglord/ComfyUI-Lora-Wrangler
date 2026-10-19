@@ -25,6 +25,7 @@ use this one server-wide key and mode.
 
 import os
 import re
+import html
 import json
 import time
 import shutil
@@ -449,6 +450,90 @@ def fetch_version(version_id):
         _recent_failures[key] = time.time()
         log.warning(f"civitai version fetch failed for {version_id}: {e}")
         return None
+
+
+# Many authors leave Civitai's trained-words field empty and put their tags
+# in the description instead: in a code block, or after "Trigger words:".
+_TRIGGER_LABEL_RE = re.compile(
+    r"\b(?:triggers?(?:\s*(?:word|phrase|tag|token)s?)?|activation\s*(?:word|text|tag|phrase)s?"
+    r"|key\s*words?)\s*(?:[:=\-–—]|\bis\b|\bare\b)\s*(?P<rest>.+)", re.I)
+_NOT_A_PROMPT_RE = re.compile(r"negative|steps\s*:|sampler\s*:|cfg\s*(?:scale)?\s*:|seed\s*:", re.I)
+
+
+def _html_text(fragment):
+    return html.unescape(re.sub(r"<[^>]+>", " ", fragment or "")).strip()
+
+
+def _phrases(text):
+    """Phrases from one block: a comma list of short tags splits, a longer
+    example prompt stays whole. LoRA tags and (word:1.2) weights go."""
+    text = re.sub(r"<lora:[^>]*>", " ", text, flags=re.I)
+    text = re.sub(r"\(([^():]+):[\d.]+\)", r"\1", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,;\"'`")
+    if not text:
+        return []
+    parts = [p.strip(" .\"'`") for p in text.split(",") if p.strip(" .\"'`")]
+    if parts and all(len(p.split()) <= 4 for p in parts):
+        return parts
+    return [text] if len(text.split()) <= 40 else []
+
+
+def described_triggers(descriptions):
+    """Trigger phrases an author put in Civitai description HTML rather
+    than the trained-words field. Capped at 12, deduplicated."""
+    out = []
+
+    def add(words):
+        for w in words:
+            if w.lower() not in {o.lower() for o in out}:
+                out.append(w)
+
+    for desc in descriptions:
+        desc = desc or ""
+        for block in re.findall(r"<pre[^>]*>(.*?)</pre>", desc, re.S | re.I):
+            text = _html_text(block)
+            if not _NOT_A_PROMPT_RE.search(text):
+                add(_phrases(text))
+        prose = re.sub(r"<pre[^>]*>.*?</pre>", " ", desc, flags=re.S | re.I)
+        for line in re.split(r"<br\s*/?>|</(?:p|li|h\d|div)>", prose, flags=re.I):
+            m = _TRIGGER_LABEL_RE.search(_html_text(line))
+            if m and not _NOT_A_PROMPT_RE.search(m.group("rest")):
+                add(_phrases(m.group("rest")))
+    return out[:12]
+
+
+def fetch_described(sha):
+    """Trigger phrases from the Civitai version and model descriptions of
+    the file with this hash, cached on its hash entry. A failed request is
+    not cached, so it can be retried. Never raises."""
+    ent = lookup_by_hash(sha, allow_network=True, need_ids=True)
+    if not ent or ent.get("missing") or not ent.get("version_id"):
+        return []
+    if "described" in ent:
+        return list(ent["described"])
+    try:
+        texts = []
+        v, _ = _get_json(f"{CIVITAI_API}/model-versions/{int(ent['version_id'])}")
+        texts.append((v or {}).get("description") or "")
+        if ent.get("model_id"):
+            m, _ = _get_json(f"{CIVITAI_API}/models/{int(ent['model_id'])}")
+            texts.append((m or {}).get("description") or "")
+    except Exception as e:
+        log.warning(f"civitai description fetch failed for {sha[:12]}: {e}")
+        return []
+    words = described_triggers(texts)
+    with _cache_lock:
+        ent["described"] = words
+        save_cache()
+    if words:
+        log.info(f"triggers from the civitai description of {sha[:12]}: {', '.join(words)}")
+    return words
+
+
+def cached_entry(path):
+    """The Civitai cache entry for a local file, without hashing or network."""
+    sha = cached_sha256(path)
+    return lookup_by_hash(sha, allow_network=False) if sha else None
 
 
 # ---------------------------------------------------------------- local identity
