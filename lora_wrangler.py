@@ -613,11 +613,18 @@ def trigger_pref_customs_for(resolved_name):
     return None
 
 
-def set_trigger_pref_payload(name, triggers, customs=None):
+def trigger_pref_split_for(resolved_name):
+    """Whether the popup shows this lora's Author Suggested phrases split."""
+    ent = _get_trigger_prefs().get(_pref_key(resolved_name))
+    return isinstance(ent, dict) and ent.get("split") is True
+
+
+def set_trigger_pref_payload(name, triggers, customs=None, split=None):
     """Set (list) or clear (None) the saved selection for a lora by fuzzy
     name. customs optionally records the user's full custom-trigger roster
-    (including toggled-off ones) so they survive deselection. Pure function
-    backing the POST endpoint; returns a payload."""
+    (including toggled-off ones) so they survive deselection. split, when
+    given, records whether the popup shows Author Suggested phrases split
+    at commas. Pure function backing the POST endpoint; returns a payload."""
     try:
         available = folder_paths.get_filename_list("loras")
         resolved, err = resolve_lora(name, available)
@@ -638,6 +645,10 @@ def set_trigger_pref_payload(name, triggers, customs=None):
                 ent["customs"] = cc
             else:
                 ent.pop("customs", None)
+        if split:
+            ent["split"] = True
+        elif split is not None:
+            ent.pop("split", None)
         if ent:
             prefs[key] = ent
         else:
@@ -1365,6 +1376,7 @@ def triggers_endpoint_payload(name, do_fetch):
                     bool(ent.get("missing")) or "desc_triggers" in ent),
                 "selected": trigger_pref_for(resolved),
                 "customs": trigger_pref_customs_for(resolved),
+                "split": trigger_pref_split_for(resolved),
                 "source": source, "civitai_url": cached_civitai_page(path),
                 "version": __version__}
     except Exception as e:
@@ -1817,7 +1829,7 @@ try:
         payload = await asyncio.get_event_loop().run_in_executor(
             None, set_trigger_pref_payload,
             data.get("name", ""), data.get("triggers", None),
-            data.get("customs", None))
+            data.get("customs", None), data.get("split", None))
         return web.json_response(payload)
 
     @PromptServer.instance.routes.get("/lora_wrangler/loras")

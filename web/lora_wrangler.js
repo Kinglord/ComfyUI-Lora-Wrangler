@@ -693,7 +693,7 @@ const CSS = `
 .lw-pills { display:flex; flex-wrap:wrap; gap:5px; max-height:40vh;
   overflow-y:auto; }
 .lw-pills-label { margin:8px 0 4px; color:#8a8a98; font-size:11px;
-  cursor:help; user-select:none; }
+  cursor:help; user-select:none; display:flex; align-items:center; gap:8px; }
 .lw-pill { padding:2px 10px; border-radius:11px; cursor:pointer;
   border:1px solid var(--border-color, #4e4e4e); user-select:none;
   color:#9a9aa8; background:transparent; font-size:12px; }
@@ -859,7 +859,9 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
   body.textContent = "loading\u2026";
   panel.append(head, body);
 
-  let known = [];
+  let authored = [];        // triggers as the backend lists them
+  let split = false;        // Author Suggested phrases shown split at commas
+  let known = [];           // what the pills show
   let defaults = [];        // what a run uses with no saved selection
   let civitaiChecked = false;
   let customs = [];
@@ -893,6 +895,44 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
     }
   };
 
+  const pieces = (t) =>
+    t.split(",").map((p) => p.trim().replace(/^and\s+/i, "").replace(/\.+$/, "")).filter(Boolean);
+  const deriveKnown = () => {
+    if (!split) return authored.slice();
+    const out = [];
+    authored.forEach((t) => {
+      (defaults.includes(t) ? [t] : pieces(t)).forEach((p) => {
+        if (!out.some((o) => o.toLowerCase() === p.toLowerCase())) out.push(p);
+      });
+    });
+    return out;
+  };
+  const splittable = () =>
+    authored.filter((t) => !defaults.includes(t) && pieces(t).length > 1);
+
+  // Picks follow the toggle: a picked phrase becomes all its pieces, and
+  // pieces join back only when all were picked. A piece left over after
+  // joining stays as your own trigger, so what runs doesn't change.
+  const toggleSplit = () => {
+    const phrases = splittable();
+    if (split) {
+      phrases.forEach((t) => { if (pieces(t).every((p) => sel.has(p))) sel.add(t); });
+    } else {
+      phrases.forEach((t) => { if (sel.has(t)) pieces(t).forEach((p) => sel.add(p)); });
+    }
+    split = !split;
+    known = deriveKnown();
+    customs = customs.filter((t) => !known.includes(t));
+    [...sel].forEach((t) => {
+      if (known.includes(t) || customs.includes(t)) return;
+      if (phrases.includes(t) ||
+          phrases.some((ph) => sel.has(ph) && pieces(ph).includes(t))) sel.delete(t);
+      else customs.push(t);
+    });
+    commit();
+    renderPills();
+  };
+
   const commit = async () => {
     const selKnown = known.filter((t) => sel.has(t));
     const selCustom = customs.filter((t) => sel.has(t));
@@ -912,6 +952,7 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
           name: row.name,
           triggers,
           customs: isDefaultAll || !customs.length ? null : customs.slice(),
+          split,
         }),
       });
       if (r.ok) {
@@ -1025,6 +1066,16 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
       label.title = "Listed by the LoRA's author on Civitai but not in the " +
         "file itself. Often example prompts, so they stay off unless you " +
         "click them on.";
+      if (split || splittable().length) {
+        const sBtn = document.createElement("button");
+        sBtn.className = "lw-trigpop-link";
+        sBtn.textContent = split ? "Join" : "Split";
+        sBtn.title = split
+          ? "Put the author's phrases back together"
+          : "Split the author's phrases at each comma, for this LoRA";
+        sBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleSplit(); });
+        label.appendChild(sBtn);
+      }
       const extraPills = document.createElement("div");
       extraPills.className = "lw-pills";
       extras.forEach((t) => extraPills.appendChild(mk(t, false)));
@@ -1161,8 +1212,9 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
             "/lora_wrangler/triggers?fetch=1&name=" +
             encodeURIComponent(row.name));
           const d = await r.json();
-          known = d.triggers || [];
-          defaults = (d.default || known).slice();
+          authored = d.triggers || [];
+          defaults = (d.default || authored).slice();
+          known = deriveKnown();
           civitaiChecked = true;
           if (d.civitai_url) setPage(d.civitai_url);
           const newSource = d.source || null;
@@ -1188,8 +1240,10 @@ async function openTriggerPopup(anchor, row, sync, onAnnChanged, onRangeChanged)
     const r = await api.fetchApi(
       "/lora_wrangler/triggers?fetch=0&name=" + encodeURIComponent(row.name));
     const d = await r.json();
-    known = (d.triggers || []).slice();
-    defaults = (d.default || known).slice();
+    authored = (d.triggers || []).slice();
+    defaults = (d.default || authored).slice();
+    split = !!d.split;
+    known = deriveKnown();
     civitaiChecked = !!d.civitai_checked || !!d.virtual;
     saved = d.selected != null ? d.selected.slice() : null;
     savedCustoms = d.customs != null ? d.customs.slice() : null;

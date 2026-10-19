@@ -458,6 +458,9 @@ _TRIGGER_LABEL_RE = re.compile(
     r"(?<!no )\b(?:triggers?(?:\s*(?:word|phrase|tag|token)s?)?|activation\s*(?:word|text|tag|phrase)s?"
     r"|key\s*words?)\s*(?P<sep>[:=\-–—]|\bis\b|\bare\b)\s*(?P<rest>.+)", re.I)
 _NOT_A_PROMPT_RE = re.compile(r"negative|\bavoid|steps\s*:|sampler\s*:|cfg\s*(?:scale)?\s*:|seed\s*:", re.I)
+# a character's look written as prose under its own label
+_LOOKS_RE = re.compile(
+    r"[^:]{0,60}\b(?:appearance|(?:physical|character)\s+description)\b[^:]{0,40}(?::\s*(?P<rest>.*))?$", re.I | re.S)
 _PRE_RE = re.compile(r"<pre[^>]*>(.*?)</pre>", re.S | re.I)
 _TICKS_RE = re.compile(r"`([^`]+)`")
 
@@ -496,17 +499,29 @@ def described_triggers(descriptions):
     def scan(paragraphs):
         # Inline code is in backticks. It counts after a trigger label, or
         # when introduced by a colon ("For identity, use:" then `...`).
+        # Appearance prose gives a phrase per sentence.
         prev = ""
         for p in paragraphs:
             p = p.replace("*", "").strip()
             if not p:
                 continue
             m = _TRIGGER_LABEL_RE.search(p)
+            looks = _LOOKS_RE.match(p)
+            heading = _LOOKS_RE.match(prev)
+            if looks and looks.group("rest"):
+                prose = looks.group("rest")
+            elif not looks and heading and not heading.group("rest") and len(prev.split()) <= 6:
+                prose = p
+            else:
+                prose = None
             if m:
                 # "the trigger is ..." often goes on to explain rather than name a tag
                 rest = m.group("rest")
                 for s in _TICKS_RE.findall(rest) or [rest]:
                     add(s, short=m.group("sep").isalpha())
+            elif prose:
+                for s in re.split(r"(?<=[.!?])\s+", prose):
+                    add(s)
             else:
                 intro = p.split("`")[0].strip() or prev
                 if intro.endswith(":") and not _NOT_A_PROMPT_RE.search(intro):
