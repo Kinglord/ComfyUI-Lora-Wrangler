@@ -455,9 +455,11 @@ def fetch_version(version_id):
 # Many authors leave Civitai's trained-words field empty and put their tags
 # in the description instead: in a code block, or after "Trigger words:".
 _TRIGGER_LABEL_RE = re.compile(
-    r"\b(?:triggers?(?:\s*(?:word|phrase|tag|token)s?)?|activation\s*(?:word|text|tag|phrase)s?"
-    r"|key\s*words?)\s*(?:[:=\-–—]|\bis\b|\bare\b)\s*(?P<rest>.+)", re.I)
-_NOT_A_PROMPT_RE = re.compile(r"negative|steps\s*:|sampler\s*:|cfg\s*(?:scale)?\s*:|seed\s*:", re.I)
+    r"(?<!no )\b(?:triggers?(?:\s*(?:word|phrase|tag|token)s?)?|activation\s*(?:word|text|tag|phrase)s?"
+    r"|key\s*words?)\s*(?P<sep>[:=\-–—]|\bis\b|\bare\b)\s*(?P<rest>.+)", re.I)
+_NOT_A_PROMPT_RE = re.compile(r"negative|\bavoid|steps\s*:|sampler\s*:|cfg\s*(?:scale)?\s*:|seed\s*:", re.I)
+_PRE_RE = re.compile(r"<pre[^>]*>(.*?)</pre>", re.S | re.I)
+_TICKS_RE = re.compile(r"`([^`]+)`")
 
 
 def _html_text(fragment):
@@ -470,12 +472,12 @@ def _phrases(text):
     text = re.sub(r"<lora:[^>]*>", " ", text, flags=re.I)
     text = re.sub(r"\(([^():]+):[\d.]+\)", r"\1", text)
     text = re.sub(r"\s+", " ", text).strip(" .,;\"'`")
-    if not text:
+    if not any(c.isalpha() for c in text) or re.match(r"(?:none|n/a)\b", text, re.I):
         return []
     parts = [p.strip(" .\"'`") for p in text.split(",") if p.strip(" .\"'`")]
     if parts and all(len(p.split()) <= 4 for p in parts):
         return parts
-    return [text] if len(text.split()) <= 40 else []
+    return [text] if len(text.split()) <= 60 else []
 
 
 def described_triggers(descriptions):
@@ -483,22 +485,48 @@ def described_triggers(descriptions):
     than the trained-words field. Capped at 12, deduplicated."""
     out = []
 
-    def add(words):
+    def add(text, short=False):
+        words = _phrases(text)
+        if _NOT_A_PROMPT_RE.search(text) or (short and any(len(w.split()) > 4 for w in words)):
+            return
         for w in words:
             if w.lower() not in {o.lower() for o in out}:
                 out.append(w)
 
+    def scan(paragraphs):
+        # Inline code is in backticks. It counts after a trigger label, or
+        # when introduced by a colon ("For identity, use:" then `...`).
+        prev = ""
+        for p in paragraphs:
+            p = p.replace("*", "").strip()
+            if not p:
+                continue
+            m = _TRIGGER_LABEL_RE.search(p)
+            if m:
+                # "the trigger is ..." often goes on to explain rather than name a tag
+                rest = m.group("rest")
+                for s in _TICKS_RE.findall(rest) or [rest]:
+                    add(s, short=m.group("sep").isalpha())
+            else:
+                intro = p.split("`")[0].strip() or prev
+                if intro.endswith(":") and not _NOT_A_PROMPT_RE.search(intro):
+                    for s in _TICKS_RE.findall(p):
+                        add(s)
+            prev = p
+
     for desc in descriptions:
         desc = desc or ""
-        for block in re.findall(r"<pre[^>]*>(.*?)</pre>", desc, re.S | re.I):
+        for block in _PRE_RE.findall(desc):
             text = _html_text(block)
-            if not _NOT_A_PROMPT_RE.search(text):
-                add(_phrases(text))
-        prose = re.sub(r"<pre[^>]*>.*?</pre>", " ", desc, flags=re.S | re.I)
-        for line in re.split(r"<br\s*/?>|</(?:p|li|h\d|div)>", prose, flags=re.I):
-            m = _TRIGGER_LABEL_RE.search(_html_text(line))
-            if m and not _NOT_A_PROMPT_RE.search(m.group("rest")):
-                add(_phrases(m.group("rest")))
+            paragraphs = re.split(r"\n\s*\n", text)
+            # a whole description pasted as one code block reads as prose
+            if len(paragraphs) > 1 or _TRIGGER_LABEL_RE.search(text):
+                scan(paragraphs)
+            else:
+                add(text)
+        prose = _PRE_RE.sub(" ", desc)
+        prose = re.sub(r"<code[^>]*>(.*?)</code>", r"`\1`", prose, flags=re.S | re.I)
+        scan(_html_text(p) for p in re.split(r"<br\s*/?>|</(?:p|li|h\d|div)>", prose, flags=re.I))
     return out[:12]
 
 
@@ -509,8 +537,8 @@ def fetch_described(sha):
     ent = lookup_by_hash(sha, allow_network=True, need_ids=True)
     if not ent or ent.get("missing") or not ent.get("version_id"):
         return []
-    if "described" in ent:
-        return list(ent["described"])
+    if "desc_triggers" in ent:
+        return list(ent["desc_triggers"])
     try:
         texts = []
         v, _ = _get_json(f"{CIVITAI_API}/model-versions/{int(ent['version_id'])}")
@@ -523,7 +551,7 @@ def fetch_described(sha):
         return []
     words = described_triggers(texts)
     with _cache_lock:
-        ent["described"] = words
+        ent["desc_triggers"] = words
         save_cache()
     if words:
         log.info(f"triggers from the civitai description of {sha[:12]}: {', '.join(words)}")

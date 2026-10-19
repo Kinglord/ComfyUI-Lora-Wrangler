@@ -1337,7 +1337,7 @@ def triggers_endpoint_payload(name, do_fetch):
             return {"triggers": [], "error": f"'{resolved}' has no path"}
         local, source = resolve_declared_src(path)
         civ = cached_civitai_triggers(path)
-        described = list((_lr.cached_entry(path) or {}).get("described") or [])
+        described = list((_lr.cached_entry(path) or {}).get("desc_triggers") or [])
         fetched = False
         if do_fetch:
             civ = fetch_civitai_triggers(path, write_sidecar=not local) or civ
@@ -1354,15 +1354,15 @@ def triggers_endpoint_payload(name, do_fetch):
             default = infer_dataset_tags(path)
             source = "dataset-tags" if default else None
         known = list(default) + [w for w in civ if w not in default]
-        seen = {k.lower() for k in known}
-        known += [w for w in described if w.lower() not in seen]
+        seen = {k.lower().rstrip(" .,") for k in known}
+        known += [w for w in described if w.lower().rstrip(" .,") not in seen]
         ent = _lr.cached_entry(path)
         return {"triggers": known, "default": default,
                 "resolved": resolved, "fetched": fetched,
                 # checked once the descriptions were read too (or the file
                 # isn't on Civitai), so older lookups offer the button again
                 "civitai_checked": bool(ent) and (
-                    bool(ent.get("missing")) or "described" in ent),
+                    bool(ent.get("missing")) or "desc_triggers" in ent),
                 "selected": trigger_pref_for(resolved),
                 "customs": trigger_pref_customs_for(resolved),
                 "source": source, "civitai_url": cached_civitai_page(path),
